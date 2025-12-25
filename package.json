@@ -1,0 +1,21 @@
+{
+  "name": "lol-build-intel",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Patch-safe OP.GG-based League of Legends build intelligence system",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "scrape": "node scripts/scrape-opgg.mjs league/ItemSets.json",
+    "overlay": "npx electron overlay/main.mjs",
+    "zip": "node scripts/zip.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.7.0"
+  },
+  "devDependencies": {
+    "electron": "^30.5.1"
+  }
+}
