@@ -1,0 +1,196 @@
+/**
+ * OVERLAY MAIN
+ * Bigger, resizable overlay that stays on top + toggleable + draggable via IPC
+ * (Debug console stays as-is)
+ */
+
+import { app, BrowserWindow, globalShortcut, ipcMain } from "electron";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+import { lockMatchup } from "../engine/live-state.mjs";
+import { startLiveRecommender } from "../engine/live-recommender.mjs";
+import { startChampSelectWatcher } from "../engine/champ-select/champ-select-watcher.mjs";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+let win;
+let dbg;
+let isVisible = true;
+let lastState = null;
+
+const RUNTIME_DIR = path.join(process.cwd(), "runtime");
+const LOG_PATH = path.join(RUNTIME_DIR, "debug.log");
+
+function ensureRuntimeDir() {
+  try {
+    if (!fs.existsSync(RUNTIME_DIR))
+      fs.mkdirSync(RUNTIME_DIR, { recursive: true });
+  } catch {}
+}
+
+function ts() {
+  const d = new Date();
+  return d.toISOString().replace("T", " ").replace("Z", "");
+}
+
+function safeOneLine(obj) {
+  try {
+    const s = JSON.stringify(obj);
+    return s.length > 1400 ? s.slice(0, 1400) + "…(trunc)" : s;
+  } catch {
+    return String(obj);
+  }
+}
+
+function log(msg, obj) {
+  ensureRuntimeDir();
+  const line =
+    obj !== undefined ? `${ts()} ${msg} ${safeOneLine(obj)}` : `${ts()} ${msg}`;
+
+  console.log(line);
+  try {
+    fs.appendFileSync(LOG_PATH, line + "\n", "utf8");
+  } catch {}
+
+  if (dbg?.webContents) dbg.webContents.send("debug-log", line);
+}
+
+function reassertOnTop() {
+  if (!win || win.isDestroyed()) return;
+  win.setAlwaysOnTop(true, "screen-saver");
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+}
+
+function sendToUI(payload) {
+  if (win?.webContents) win.webContents.send("live-update", payload);
+}
+
+function createDebugWindow(preloadPath) {
+  dbg = new BrowserWindow({
+    width: 760,
+    height: 520,
+    title: "lol-build-intel Debug Console",
+    backgroundColor: "#070b10",
+    webPreferences: {
+      preload: preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  dbg.loadFile(path.join(__dirname, "debug.html"));
+
+  dbg.webContents.on("did-finish-load", () => {
+    log("[debug] window ready");
+    log("[debug] log file path:", LOG_PATH);
+  });
+}
+
+function createOverlayWindow(preloadPath) {
+  win = new BrowserWindow({
+    width: 360,
+    height: 260,
+    minWidth: 300,
+    minHeight: 200,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    resizable: true, // ✅ allow user to resize if they want
+    skipTaskbar: true,
+    focusable: false,
+    hasShadow: false,
+    webPreferences: {
+      preload: preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  reassertOnTop();
+  win.loadFile(path.join(__dirname, "index.html"));
+
+  win.webContents.on("did-finish-load", () => {
+    log("[overlay] did-finish-load");
+    if (lastState) {
+      log("[overlay] sending cached state", {
+        phase: lastState.phase,
+        lcuOk: lastState.lcuOk,
+      });
+      sendToUI(lastState);
+    } else {
+      sendToUI({ phase: "Starting…", lcuOk: null });
+    }
+  });
+
+  win.on("blur", () => reassertOnTop());
+  win.on("show", () => reassertOnTop());
+  win.on("restore", () => reassertOnTop());
+
+  globalShortcut.register("Insert", () => {
+    if (!win || win.isDestroyed()) return;
+    isVisible = !isVisible;
+    log("[overlay] toggle", { isVisible });
+
+    if (isVisible) {
+      win.showInactive();
+      reassertOnTop();
+    } else {
+      win.hide();
+    }
+  });
+
+  // cheap periodic reassert (handles LoL z-order weirdness)
+  setInterval(() => {
+    if (isVisible) reassertOnTop();
+  }, 1200);
+}
+
+function createWindows() {
+  const preloadPath = path.join(__dirname, "preload.cjs");
+  log("[app] preload path", preloadPath);
+
+  createDebugWindow(preloadPath);
+  createOverlayWindow(preloadPath);
+
+  log("[app] starting champ select watcher");
+  startChampSelectWatcher((payload) => {
+    lastState = payload;
+    log("[champ-select] update", payload);
+    sendToUI(payload);
+  });
+
+  log("[app] starting live recommender");
+  startLiveRecommender((payload) => {
+    lastState = payload;
+    log("[live] update", payload);
+    sendToUI(payload);
+  });
+
+  log("[app] ready");
+}
+
+ipcMain.on("lock-matchup", (_evt, data) => {
+  log("[ipc] lock-matchup", data);
+  lockMatchup(data);
+});
+
+ipcMain.on("overlay-drag-delta", (_evt, delta) => {
+  if (!win || win.isDestroyed()) return;
+  const dx = Number(delta?.dx ?? 0);
+  const dy = Number(delta?.dy ?? 0);
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
+
+  const [x, y] = win.getPosition();
+  win.setPosition(Math.round(x + dx), Math.round(y + dy), false);
+});
+
+app.whenReady().then(createWindows);
+
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") app.quit();
+});

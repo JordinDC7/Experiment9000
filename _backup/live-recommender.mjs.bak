@@ -1,0 +1,152 @@
+/**
+ * LIVE RECOMMENDER (reliable)
+ * - Uses LCU to determine phase (https.request via lcu-client)
+ * - Uses Live Client API (2999) via https.request
+ * - Emits payload every tick so UI/debug always shows what's happening
+ */
+
+import https from "https";
+import { lcuGet } from "./lcu/lcu-client.mjs";
+
+function httpsJsonNoAuth({ port, path }) {
+  return new Promise((resolve) => {
+    const req = https.request(
+      {
+        method: "GET",
+        host: "127.0.0.1",
+        port,
+        path,
+        rejectUnauthorized: false,
+      },
+      (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => (body += chunk));
+        res.on("end", () => {
+          const status = res.statusCode ?? 0;
+
+          if (status < 200 || status >= 300) {
+            resolve({
+              ok: false,
+              reason: "HTTP_NOT_OK",
+              status,
+              body: body?.slice(0, 500),
+            });
+            return;
+          }
+
+          try {
+            const json = body ? JSON.parse(body) : null;
+            resolve({ ok: true, data: json });
+          } catch (err) {
+            resolve({
+              ok: false,
+              reason: "JSON_PARSE_ERROR",
+              status,
+              error: String(err),
+              body: body?.slice(0, 500),
+            });
+          }
+        });
+      }
+    );
+
+    req.on("error", (err) => {
+      resolve({ ok: false, reason: "REQUEST_ERROR", error: String(err) });
+    });
+
+    req.end();
+  });
+}
+
+async function fetchLiveAllGameData() {
+  // Live Client API is only up when IN GAME
+  return httpsJsonNoAuth({ port: 2999, path: "/liveclientdata/allgamedata" });
+}
+
+function normalizeLive(all) {
+  if (!all) return null;
+
+  const self = all.activePlayer ?? null;
+  const players = Array.isArray(all.allPlayers) ? all.allPlayers : [];
+
+  const enemies =
+    self && self.team
+      ? players.filter((p) => p.team !== self.team).map((p) => p.championName)
+      : [];
+
+  return {
+    gameTime: all.gameData?.gameTime ?? null,
+    self: {
+      champion: self?.championName ?? null,
+      level: self?.level ?? 1,
+      gold: self?.currentGold ?? 0,
+      items: (self?.items ?? []).map((i) => ({
+        itemID: i.itemID,
+        count: i.count ?? 1,
+      })),
+    },
+    enemies,
+  };
+}
+
+export function startLiveRecommender(onUpdate, opts = {}) {
+  const intervalMs = Number(opts.intervalMs ?? 900);
+
+  console.log("=== LIVE RECOMMENDER START ===");
+
+  let lastSig = "";
+
+  const tick = async () => {
+    const phaseRes = await lcuGet("/lol-gameflow/v1/gameflow-phase");
+
+    let payload;
+
+    if (!phaseRes.ok) {
+      payload = {
+        phase: "Unknown",
+        lcuOk: false,
+        lcuReason: phaseRes.reason,
+        lcuError: phaseRes.error,
+        status: phaseRes.status,
+        route: phaseRes.route,
+        port: phaseRes.port,
+        lockPath: phaseRes.lockPath,
+      };
+    } else {
+      const phase =
+        typeof phaseRes.data === "string" ? phaseRes.data : "Unknown";
+
+      payload = {
+        phase,
+        lcuOk: true,
+        lockPath: phaseRes.lockPath,
+      };
+
+      if (phase === "InProgress") {
+        const liveRes = await fetchLiveAllGameData();
+        payload.liveOk = liveRes.ok;
+
+        if (!liveRes.ok) {
+          payload.liveReason = liveRes.reason;
+          payload.liveStatus = liveRes.status;
+          payload.liveError = liveRes.error;
+          payload.liveBody = liveRes.body;
+          payload.live = null;
+        } else {
+          payload.live = normalizeLive(liveRes.data);
+        }
+      }
+    }
+
+    const sig = JSON.stringify(payload);
+    if (sig !== lastSig) {
+      lastSig = sig;
+      onUpdate?.(payload);
+    }
+  };
+
+  tick();
+  const t = setInterval(tick, intervalMs);
+  return () => clearInterval(t);
+}
