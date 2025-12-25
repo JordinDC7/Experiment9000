@@ -1,0 +1,18 @@
+{
+  "overrideProfile": null,
+  "dock": {
+    "chip": 0,
+    "draft": 0,
+    "mold": 0
+  },
+  "bounds": {
+    "CHIP": null,
+    "DRAFT": {
+      "x": 13,
+      "y": 38,
+      "width": 1185,
+      "height": 1308
+    },
+    "EXPANDED": null
+  }
+}

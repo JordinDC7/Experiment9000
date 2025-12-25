@@ -1,0 +1,902 @@
+<!-- overlay/index.html -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>LoL Build Intel — HUD Augments</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root{
+    /* LoL-ish palette */
+    --gold: rgba(255, 214, 120, 0.92);
+    --gold2: rgba(255, 214, 120, 0.35);
+    --blue: rgba(120, 185, 255, 0.92);
+    --blue2: rgba(120, 185, 255, 0.35);
+
+    --text: rgba(236, 242, 255, 0.94);
+    --muted: rgba(210, 220, 255, 0.72);
+
+    --ink: rgba(6, 8, 14, 0.24);
+    --ink2: rgba(6, 8, 14, 0.10);
+
+    --outline: rgba(0, 0, 0, 0.55);
+
+    --shadow: 0 10px 30px rgba(0,0,0,0.35);
+    --shadowSoft: 0 8px 22px rgba(0,0,0,0.25);
+
+    --font: system-ui, -apple-system, Segoe UI, Roboto, Inter, sans-serif;
+    --smallcaps: 600 11px/1.2 var(--font);
+    --body: 500 12px/1.2 var(--font);
+
+    --fade: 0.10; /* base opacity (air-like) */
+    --fadeActive: 0.92;
+    --fadeIdle: 0.06;
+
+    --ringSize: 46px;
+    --ringStroke: 2px;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: transparent; font-family: var(--font); }
+  body { overflow: hidden; }
+
+  /* Everything is click-through by default; main process toggles ignore-mouse. */
+  #root{
+    position: relative;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+
+  /* Top hover zone (used to make the window draggable/resizable when needed) */
+  #topHoverZone{
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 28px;
+    pointer-events: none; /* hover is detected via mousemove, not pointer events */
+    z-index: 9999;
+  }
+  #dragHint{
+    position: absolute;
+    left: 50%;
+    top: 10px;
+    transform: translate(-50%,-50%);
+    width: 220px;
+    height: 2px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.30), transparent);
+    opacity: 0.0;
+    filter: drop-shadow(0 1px 3px rgba(0,0,0,0.5));
+    transition: opacity .2s ease;
+  }
+  #root.draggable #dragHint{ opacity: 0.35; }
+
+  /* Transparent drag region (only active when .draggable) */
+  #dragBar{
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 28px;
+    opacity: 0;
+    -webkit-app-region: drag;
+    pointer-events: none;
+    z-index: 9998;
+  }
+  #root.draggable #dragBar{ pointer-events: auto; }
+
+  /* Augment wrapper */
+  .augment{
+    position: absolute;
+    transform: translate(-50%,-50%);
+    opacity: var(--fade);
+    transition: opacity .18s ease, transform .18s ease, filter .18s ease;
+    filter: drop-shadow(0 3px 10px rgba(0,0,0,0.35));
+    z-index: 50;
+  }
+  .augment.hidden { opacity: 0; transform: translate(-50%,-50%) scale(0.98); }
+  .augment.active { opacity: var(--fadeActive); }
+  .augment.idle { opacity: var(--fadeIdle); }
+
+  /* Tiny LoL tooltip-style label */
+  .tag{
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    background: linear-gradient(180deg, rgba(10,12,18,0.35), rgba(10,12,18,0.18));
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+  .tag .k{
+    font: var(--smallcaps);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: rgba(235,242,255,0.85);
+    text-shadow: 0 1px 0 var(--outline), 0 0 10px rgba(0,0,0,0.35);
+  }
+  .tag .v{
+    font: var(--body);
+    color: var(--text);
+    text-shadow: 0 1px 0 var(--outline), 0 0 10px rgba(0,0,0,0.35);
+    white-space: nowrap;
+  }
+
+  /* Ring glow (skill augment) */
+  .ring{
+    width: var(--ringSize);
+    height: var(--ringSize);
+    border-radius: 999px;
+    position: absolute;
+    transform: translate(-50%,-50%);
+    opacity: 0;
+    transition: opacity .18s ease, filter .18s ease;
+    mix-blend-mode: screen;
+  }
+  .ring::before{
+    content: "";
+    position: absolute; inset: 0;
+    border-radius: 999px;
+    box-shadow:
+      0 0 0 var(--ringStroke) rgba(255,255,255,0.16) inset,
+      0 0 0 1px rgba(0,0,0,0.40),
+      0 0 26px rgba(120,185,255,0.22),
+      0 0 46px rgba(255,214,120,0.16);
+  }
+  .ring.gold::before{
+    box-shadow:
+      0 0 0 var(--ringStroke) rgba(255,255,255,0.16) inset,
+      0 0 0 1px rgba(0,0,0,0.42),
+      0 0 28px rgba(255,214,120,0.28),
+      0 0 60px rgba(255,214,120,0.18);
+  }
+  .ring.blue::before{
+    box-shadow:
+      0 0 0 var(--ringStroke) rgba(255,255,255,0.16) inset,
+      0 0 0 1px rgba(0,0,0,0.42),
+      0 0 28px rgba(120,185,255,0.28),
+      0 0 60px rgba(120,185,255,0.18);
+  }
+
+  .ring.show{ opacity: 1; }
+  .ring.pulse{
+    animation: pulse 1.15s ease-out 0s 3;
+  }
+  @keyframes pulse{
+    0% { transform: translate(-50%,-50%) scale(0.95); filter: brightness(1.05); opacity: 0.0; }
+    15%{ opacity: 1; }
+    55%{ transform: translate(-50%,-50%) scale(1.06); filter: brightness(1.18); opacity: 1; }
+    100%{ transform: translate(-50%,-50%) scale(1.0); filter: brightness(1.0); opacity: .60; }
+  }
+
+  /* Skill tooltip */
+  #skillHint{
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, calc(-100% - 10px));
+    opacity: 0;
+    transition: opacity .15s ease;
+  }
+  #skillAugment.active #skillHint{ opacity: 1; }
+
+  /* Next buy augment */
+  #buyRow{
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .icon{
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02));
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.10);
+    overflow: hidden;
+  }
+  .icon img{
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    image-rendering: -webkit-optimize-contrast;
+  }
+  .badge{
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(8,10,14,0.40), rgba(8,10,14,0.20));
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);
+  }
+  .badge .n{
+    font: 700 13px/1 var(--font);
+    color: var(--gold);
+    text-shadow: 0 1px 0 var(--outline);
+  }
+  .badge .s{
+    font: var(--smallcaps);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.75);
+    text-shadow: 0 1px 0 var(--outline);
+  }
+
+  /* Target callout */
+  #targetTag .icon{
+    width: 26px;
+    height: 26px;
+    border-radius: 999px;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.14), 0 10px 22px rgba(0,0,0,0.30);
+  }
+  #targetText{
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  #targetText .line1{
+    font: var(--smallcaps);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: rgba(235,242,255,0.78);
+  }
+  #targetText .line2{
+    font: 700 13px/1.2 var(--font);
+    color: var(--text);
+  }
+
+  /* Objective timers */
+  #objWrap{
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .obj{
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(8,10,14,0.35), rgba(8,10,14,0.18));
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+  .obj .t{
+    font: 800 12px/1 var(--font);
+    color: rgba(255,255,255,0.92);
+    text-shadow: 0 1px 0 var(--outline);
+  }
+  .obj .lab{
+    font: var(--smallcaps);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.68);
+    text-shadow: 0 1px 0 var(--outline);
+  }
+  .dot{
+    width: 8px;
+    height: 8px;
+    border-radius: 99px;
+    background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.95), rgba(255,255,255,0.0) 55%),
+                radial-gradient(circle at 40% 40%, rgba(255,214,120,0.85), rgba(255,214,120,0.0) 70%);
+    box-shadow: 0 0 16px rgba(255,214,120,0.26);
+  }
+  .dot.blue{
+    background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.95), rgba(255,255,255,0.0) 55%),
+                radial-gradient(circle at 40% 40%, rgba(120,185,255,0.85), rgba(120,185,255,0.0) 70%);
+    box-shadow: 0 0 16px rgba(120,185,255,0.26);
+  }
+
+  /* Recall checklist */
+  #recList{
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .check{
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    background: linear-gradient(180deg, rgba(8,10,14,0.38), rgba(8,10,14,0.20));
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.10);
+    width: max-content;
+  }
+  .check .b{
+    width: 10px; height: 10px; border-radius: 3px;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.18);
+    background: linear-gradient(180deg, rgba(255,214,120,0.40), rgba(255,214,120,0.10));
+  }
+  .check .txt{
+    font: var(--smallcaps);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.82);
+    text-shadow: 0 1px 0 var(--outline);
+  }
+
+  /* Calibration overlay */
+  #calib{
+    position: absolute;
+    inset: 0;
+    display: none;
+    pointer-events: auto; /* only shown when calibration enabled */
+    z-index: 1000;
+  }
+  #root.calib #calib{ display: block; }
+
+  #calibShade{
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(1200px 700px at 50% 75%, rgba(10,12,18,0.18), rgba(10,12,18,0.04));
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+  }
+
+  #calibHud{
+    position: absolute;
+    left: 18px;
+    bottom: 18px;
+    max-width: 560px;
+    padding: 14px 14px;
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(10,12,18,0.62), rgba(10,12,18,0.38));
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12), var(--shadow);
+    color: var(--text);
+  }
+  #calibHud .title{
+    font: 800 12px/1.2 var(--font);
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    color: rgba(255,255,255,0.86);
+  }
+  #calibHud .row{
+    font: 500 12px/1.45 var(--font);
+    color: rgba(235,242,255,0.82);
+  }
+  #calibHud kbd{
+    display:inline-block;
+    padding: 1px 6px;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.10);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.10);
+    font: 700 11px/1.5 var(--font);
+    color: rgba(255,255,255,0.90);
+  }
+
+  .anchorMark{
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    transform: translate(-50%,-50%);
+    border-radius: 999px;
+    background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.92), rgba(255,255,255,0.0) 55%),
+                radial-gradient(circle at 40% 40%, rgba(120,185,255,0.70), rgba(120,185,255,0.0) 70%);
+    box-shadow: 0 0 26px rgba(120,185,255,0.30), 0 0 0 1px rgba(255,255,255,0.14);
+  }
+  .anchorMark.sel{
+    background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.92), rgba(255,255,255,0.0) 55%),
+                radial-gradient(circle at 40% 40%, rgba(255,214,120,0.85), rgba(255,214,120,0.0) 70%);
+    box-shadow: 0 0 28px rgba(255,214,120,0.34), 0 0 0 1px rgba(255,255,255,0.16);
+  }
+  .anchorLabel{
+    position: absolute;
+    transform: translate(-50%, calc(-100% - 6px));
+    font: 800 10px/1.1 var(--font);
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.88);
+    text-shadow: 0 1px 0 var(--outline), 0 0 10px rgba(0,0,0,0.3);
+    white-space: nowrap;
+    padding: 2px 6px;
+    border-radius: 8px;
+    background: rgba(10,12,18,0.24);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.10);
+  }
+
+  /* Reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    .ring.pulse{ animation: none; }
+  }
+</style>
+</head>
+<body>
+  <div id="root">
+    <div id="topHoverZone"><div id="dragHint"></div></div>
+    <div id="dragBar"></div>
+
+    <!-- Skill Level-Up Augment -->
+    <div id="skillAugment" class="augment hidden">
+      <div id="skillHint" class="tag">
+        <div class="k">LEVEL UP</div>
+        <div class="v" id="skillHintText">+1 → Q</div>
+      </div>
+
+      <div id="ringQ" class="ring blue"></div>
+      <div id="ringW" class="ring blue"></div>
+      <div id="ringE" class="ring blue"></div>
+      <div id="ringR" class="ring gold"></div>
+    </div>
+
+    <!-- Next Buy Augment -->
+    <div id="buyAugment" class="augment hidden">
+      <div class="tag" id="buyTag">
+        <div id="buyRow">
+          <div class="icon"><img id="buyIcon" alt="" /></div>
+          <div style="display:flex; flex-direction:column; gap:2px;">
+            <div class="k" id="buyTitle">NEXT BUY</div>
+            <div class="v" id="buyName">—</div>
+          </div>
+          <div class="badge">
+            <div class="n" id="buyGold">+0g</div>
+            <div class="s" id="buyGoldLbl">to finish</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Target Priority Callout -->
+    <div id="targetAugment" class="augment hidden">
+      <div class="tag" id="targetTag">
+        <div class="icon"><img id="targetIcon" alt="" /></div>
+        <div id="targetText">
+          <div class="line1" id="targetLine1">FOCUS</div>
+          <div class="line2" id="targetLine2">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Objective Timers -->
+    <div id="objAugment" class="augment hidden">
+      <div id="objWrap">
+        <div class="obj" id="objDragon">
+          <div class="dot"></div>
+          <div class="lab">DRAGON</div>
+          <div class="t" id="objDragonT">—</div>
+        </div>
+        <div class="obj" id="objBaron">
+          <div class="dot blue"></div>
+          <div class="lab">BARON</div>
+          <div class="t" id="objBaronT">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recall / Shop checklist -->
+    <div id="recallAugment" class="augment hidden">
+      <div id="recList">
+        <div class="check"><div class="b"></div><div class="txt">Control Ward</div></div>
+        <div class="check"><div class="b"></div><div class="txt">Refillable</div></div>
+        <div class="check"><div class="b"></div><div class="txt">Pink Timing</div></div>
+      </div>
+    </div>
+
+    <!-- Calibration UI -->
+    <div id="calib">
+      <div id="calibShade"></div>
+      <div id="calibMarks"></div>
+      <div id="calibHud">
+        <div class="title">Calibration Mode</div>
+        <div class="row">
+          <div>Toggle: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Insert</kbd></div>
+          <div>Select anchor: <kbd>Tab</kbd> (cycle) / <kbd>1</kbd>-<kbd>9</kbd> (quick)</div>
+          <div>Nudge (px): <kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd><kbd>↓</kbd> (hold <kbd>Shift</kbd> = 10px)</div>
+          <div>Nudge (%): <kbd>Ctrl</kbd> + arrows (hold <kbd>Shift</kbd> = 1.0%)</div>
+          <div>Saved automatically → <span style="opacity:.9;">runtime/hud_anchors.json</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const api = window.api;
+
+  const $ = (id) => document.getElementById(id);
+
+  const root = $("root");
+
+  const skillAugment = $("skillAugment");
+  const ringQ = $("ringQ"), ringW = $("ringW"), ringE = $("ringE"), ringR = $("ringR");
+  const skillHintText = $("skillHintText");
+
+  const buyAugment = $("buyAugment");
+  const buyIcon = $("buyIcon");
+  const buyName = $("buyName");
+  const buyGold = $("buyGold");
+
+  const targetAugment = $("targetAugment");
+  const targetIcon = $("targetIcon");
+  const targetLine1 = $("targetLine1");
+  const targetLine2 = $("targetLine2");
+
+  const objAugment = $("objAugment");
+  const objDragonT = $("objDragonT");
+  const objBaronT = $("objBaronT");
+
+  const recallAugment = $("recallAugment");
+
+  const calibMarks = $("calibMarks");
+
+  function fmtMMSS(sec){
+    const s = Math.max(0, Math.floor(Number(sec || 0)));
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${m}:${String(r).padStart(2,'0')}`;
+  }
+
+  function safeStr(v, fallback="—"){
+    if (v === null || v === undefined) return fallback;
+    const s = String(v);
+    return s.length ? s : fallback;
+  }
+
+  function setVisible(el, show){
+    if (!el) return;
+    el.classList.toggle("hidden", !show);
+  }
+
+  function setActive(el, active){
+    if (!el) return;
+    el.classList.toggle("active", !!active);
+    el.classList.toggle("idle", !active);
+  }
+
+  function championSquareUrl(champName){
+    const n = encodeURIComponent(String(champName || "").replace(/\s+/g, ""));
+    return `https://ddragon.leagueoflegends.com/cdn/img/champion/tiles/${n}_0.jpg`;
+  }
+
+  function itemIconUrl(itemId){
+    const id = String(itemId || "").replace(/[^0-9]/g, "");
+    if (!id) return "";
+    return `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/items/${id}.png`;
+  }
+
+  // --------------------- anchors ---------------------
+
+  const DEFAULT_ANCHORS = {
+    version: 1,
+    anchors: {
+      skill_q: { x: 0.468, y: 0.932, dx: 0, dy: 0 },
+      skill_w: { x: 0.502, y: 0.932, dx: 0, dy: 0 },
+      skill_e: { x: 0.536, y: 0.932, dx: 0, dy: 0 },
+      skill_r: { x: 0.571, y: 0.932, dx: 0, dy: 0 },
+      next_buy: { x: 0.808, y: 0.935, dx: 0, dy: 0 },
+      fight_callout: { x: 0.5, y: 0.878, dx: 0, dy: 0 },
+      objectives: { x: 0.91, y: 0.055, dx: 0, dy: 0 },
+      recall_check: { x: 0.5, y: 0.84, dx: 0, dy: 0 },
+      drag_hint: { x: 0.5, y: 0.015, dx: 0, dy: 0 },
+    }
+  };
+
+  let anchors = JSON.parse(JSON.stringify(DEFAULT_ANCHORS));
+  let calibration = false;
+
+  function getAnchor(key){
+    return anchors?.anchors?.[key] || DEFAULT_ANCHORS.anchors[key] || { x: 0.5, y: 0.5, dx: 0, dy: 0 };
+  }
+
+  function applyAnchorPx(el, key){
+    const a = getAnchor(key);
+    const w = window.innerWidth || 1920;
+    const h = window.innerHeight || 1080;
+    const x = (a.x * w) + (a.dx || 0);
+    const y = (a.y * h) + (a.dy || 0);
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+  }
+
+  function layout(){
+    applyAnchorPx(ringQ, "skill_q");
+    applyAnchorPx(ringW, "skill_w");
+    applyAnchorPx(ringE, "skill_e");
+    applyAnchorPx(ringR, "skill_r");
+
+    applyAnchorPx(skillAugment, "skill_w");
+    applyAnchorPx(buyAugment, "next_buy");
+    applyAnchorPx(targetAugment, "fight_callout");
+    applyAnchorPx(objAugment, "objectives");
+    applyAnchorPx(recallAugment, "recall_check");
+
+    const dragHint = document.getElementById("dragHint");
+    if (dragHint) {
+      const a = getAnchor("drag_hint");
+      dragHint.style.left = `${a.x * 100}%`;
+      dragHint.style.top = `${(a.y * 100)}%`;
+    }
+
+    if (calibration) renderCalibrationMarks();
+  }
+
+  let saveTimer = null;
+  function scheduleSave(){
+    if (!api || !api.setAnchors) return;
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      api.setAnchors(anchors).catch(() => {});
+    }, 220);
+  }
+
+  function mergeAnchors(incoming){
+    if (!incoming || typeof incoming !== "object" || !incoming.anchors) return;
+    const next = { version: 1, anchors: {} };
+    const base = DEFAULT_ANCHORS.anchors;
+
+    const mergeOne = (k, src) => {
+      const v = src?.[k] || base[k];
+      if (!v) return;
+      next.anchors[k] = {
+        x: Number.isFinite(v.x) ? v.x : base[k].x,
+        y: Number.isFinite(v.y) ? v.y : base[k].y,
+        dx: Number.isFinite(v.dx) ? v.dx : 0,
+        dy: Number.isFinite(v.dy) ? v.dy : 0,
+      };
+    };
+
+    for (const k of Object.keys(base)) mergeOne(k, incoming.anchors);
+    anchors = next;
+    layout();
+  }
+
+  // --------------------- calibration controls ---------------------
+
+  const ANCHOR_KEYS = ["skill_q","skill_w","skill_e","skill_r","next_buy","fight_callout","objectives","recall_check","drag_hint"];
+  let selIdx = 0;
+
+  function renderCalibrationMarks(){
+    calibMarks.innerHTML = "";
+    const w = window.innerWidth || 1920;
+    const h = window.innerHeight || 1080;
+
+    for (let i=0;i<ANCHOR_KEYS.length;i++){
+      const k = ANCHOR_KEYS[i];
+      const a = getAnchor(k);
+
+      const x = (a.x * w) + (a.dx || 0);
+      const y = (a.y * h) + (a.dy || 0);
+
+      const mark = document.createElement("div");
+      mark.className = "anchorMark" + (i === selIdx ? " sel" : "");
+      mark.style.left = `${x}px`;
+      mark.style.top = `${y}px`;
+
+      const lab = document.createElement("div");
+      lab.className = "anchorLabel";
+      lab.textContent = `${i+1}. ${k}`;
+      mark.appendChild(lab);
+
+      calibMarks.appendChild(mark);
+    }
+  }
+
+  function setCalibration(on){
+    calibration = !!on;
+    root.classList.toggle("calib", calibration);
+    if (calibration) root.classList.add("draggable");
+    else root.classList.remove("draggable");
+    renderCalibrationMarks();
+    layout();
+  }
+
+  function nudgeSelected({ dx=0, dy=0, pxMode=true }){
+    const key = ANCHOR_KEYS[selIdx];
+    const a = getAnchor(key);
+
+    if (pxMode) {
+      a.dx = (a.dx || 0) + dx;
+      a.dy = (a.dy || 0) + dy;
+    } else {
+      const w = window.innerWidth || 1920;
+      const h = window.innerHeight || 1080;
+      a.x = Math.min(1, Math.max(0, (a.x || 0) + (dx / w)));
+      a.y = Math.min(1, Math.max(0, (a.y || 0) + (dy / h)));
+    }
+
+    anchors.anchors[key] = a;
+    layout();
+    renderCalibrationMarks();
+    scheduleSave();
+  }
+
+  window.addEventListener("keydown", (e) => {
+    if (!calibration) return;
+
+    const stepPx = e.shiftKey ? 10 : 1;
+    const stepPct = e.shiftKey ? 1.0 : 0.1; // percent
+    const pctPxX = (window.innerWidth || 1920) * (stepPct / 100);
+    const pctPxY = (window.innerHeight || 1080) * (stepPct / 100);
+
+    if (e.key === "Tab") {
+      e.preventDefault();
+      selIdx = (selIdx + (e.shiftKey ? -1 : 1) + ANCHOR_KEYS.length) % ANCHOR_KEYS.length;
+      renderCalibrationMarks();
+      return;
+    }
+
+    if (/^[1-9]$/.test(e.key)) {
+      const n = Number(e.key) - 1;
+      if (n >= 0 && n < ANCHOR_KEYS.length) {
+        selIdx = n;
+        renderCalibrationMarks();
+      }
+      return;
+    }
+
+    const ctrl = e.ctrlKey || e.metaKey;
+    const pxMode = !ctrl;
+
+    if (e.key === "ArrowLeft") { e.preventDefault(); nudgeSelected({ dx: pxMode ? -stepPx : -pctPxX, dy: 0, pxMode }); }
+    if (e.key === "ArrowRight"){ e.preventDefault(); nudgeSelected({ dx: pxMode ? stepPx : pctPxX, dy: 0, pxMode }); }
+    if (e.key === "ArrowUp")   { e.preventDefault(); nudgeSelected({ dx: 0, dy: pxMode ? -stepPx : -pctPxY, pxMode }); }
+    if (e.key === "ArrowDown") { e.preventDefault(); nudgeSelected({ dx: 0, dy: pxMode ? stepPx : pctPxY, pxMode }); }
+  });
+
+  // --------------------- drag hover (top edge) ---------------------
+
+  let headerHover = false;
+  function updateHeaderHover(y){
+    const isHover = y <= 26; // top strip
+    if (isHover === headerHover) return;
+    headerHover = isHover;
+    root.classList.toggle("draggable", headerHover || calibration);
+    if (api && api.setHeaderHover) api.setHeaderHover(isHover);
+  }
+
+  window.addEventListener("mousemove", (e) => {
+    updateHeaderHover(e.clientY || 0);
+  }, { passive: true });
+
+  // --------------------- state rendering ---------------------
+
+  let last = { mode: "IDLE", skillAvail: false, targetKey: "", buyKey: "", ts: 0 };
+  let pulseArmedAt = 0;
+
+  function showRing(which, pulse){
+    const all = [ringQ, ringW, ringE, ringR];
+    for (const r of all) r.classList.remove("show","pulse");
+
+    const map = { Q: ringQ, W: ringW, E: ringE, R: ringR };
+    const el = map[which] || ringQ;
+    el.classList.add("show");
+    if (pulse) el.classList.add("pulse");
+
+    const anchorKey = which === "Q" ? "skill_q" : which === "W" ? "skill_w" : which === "E" ? "skill_e" : "skill_r";
+    applyAnchorPx(skillAugment, anchorKey);
+  }
+
+  function render(payload){
+    const mode = payload?.mode || "IDLE";
+    const live = payload?.live || null;
+
+    const inGame = mode === "IN_GAME";
+
+    if (!inGame) {
+      setVisible(skillAugment, false);
+      setVisible(buyAugment, false);
+      setVisible(targetAugment, false);
+      setVisible(objAugment, false);
+      setVisible(recallAugment, false);
+      return;
+    }
+
+    // --- Skill Augment ---
+    const ui = live?.ui || {};
+    const unspent = Number(ui.unspentSkillPoints ?? live?.self?.unspentSkillPoints ?? 0) || 0;
+    const skillAvail = ui.skillPointAvailable === true || unspent > 0;
+
+    let nextSkill = safeStr(ui.nextSkill || ui.recommendedSkill || "Q", "Q").toUpperCase();
+    if (!["Q","W","E","R"].includes(nextSkill)) nextSkill = "Q";
+
+    if (skillAvail && !last.skillAvail) pulseArmedAt = Date.now();
+
+    const pulse = skillAvail && (Date.now() - pulseArmedAt < 4200);
+    setVisible(skillAugment, skillAvail);
+    setActive(skillAugment, true);
+    skillHintText.textContent = `+1 → ${nextSkill}`;
+    if (skillAvail) showRing(nextSkill, pulse);
+
+    last.skillAvail = skillAvail;
+
+    // --- Next Buy Augment ---
+    const sug = live?.suggestion || null;
+    const hasBuy = !!(sug?.targetItem?.id);
+    const goldToFinish = Number(sug?.goldToFinish ?? 0);
+    const buyNow = Array.isArray(sug?.buyNow) ? sug.buyNow : [];
+
+    if (hasBuy) {
+      const targetId = sug.targetItem.id;
+      buyName.textContent = safeStr(sug.targetItem.name, "—");
+      buyGold.textContent = `+${Math.max(0, Math.floor(goldToFinish))}g`;
+
+      const iconUrl = itemIconUrl(targetId);
+      if (iconUrl) buyIcon.src = iconUrl;
+
+      const inShop = ui.inShopRange === true || ui.inBase === true;
+      const ready = goldToFinish <= 0 || buyNow.some(b => b?.isFinal);
+
+      setVisible(buyAugment, true);
+      setActive(buyAugment, ready || inShop);
+
+      const key = `${targetId}:${ready ? "1" : "0"}`;
+      if (key !== last.buyKey && ready) {
+        buyAugment.style.transform = "translate(-50%,-50%) scale(1.03)";
+        setTimeout(() => buyAugment.style.transform = "translate(-50%,-50%)", 160);
+      }
+      last.buyKey = key;
+    } else {
+      setVisible(buyAugment, false);
+    }
+
+    // --- Target Priority Microcallout ---
+    const fight = live?.fight || ui.fight || null;
+    const focus = fight?.focus || fight?.primary || null;
+    const avoid = Array.isArray(fight?.avoid) ? fight.avoid : [];
+    const avoidOne = avoid.length ? avoid[0] : null;
+
+    const tgtKey = `${focus || ""}|${avoidOne || ""}`;
+    const now = Date.now();
+    if (tgtKey && tgtKey !== "|" && tgtKey !== last.targetKey) {
+      last.targetKey = tgtKey;
+      last.ts = now;
+
+      const champ = focus || avoidOne || "—";
+      targetLine1.textContent = focus ? "FOCUS" : "AVOID";
+      targetLine2.textContent = champ;
+      targetIcon.src = championSquareUrl(champ);
+
+      setVisible(targetAugment, true);
+      setActive(targetAugment, true);
+    }
+
+    const age = now - (last.ts || 0);
+    if (age > 2600) setActive(targetAugment, false);
+    if (age > 7000) setVisible(targetAugment, false);
+
+    // --- Objectives (show only when within 90s) ---
+    const obj = ui.objectives || live?.objectives || null;
+    const dSec = Number(obj?.dragon?.in ?? obj?.dragon ?? NaN);
+    const bSec = Number(obj?.baron?.in ?? obj?.baron ?? NaN);
+
+    const showDragon = Number.isFinite(dSec) && dSec <= 90 && dSec >= 0;
+    const showBaron = Number.isFinite(bSec) && bSec <= 90 && bSec >= 0;
+
+    if (showDragon || showBaron) {
+      objDragonT.textContent = showDragon ? fmtMMSS(dSec) : "—";
+      objBaronT.textContent = showBaron ? fmtMMSS(bSec) : "—";
+      setVisible(objAugment, true);
+      setActive(objAugment, true);
+    } else {
+      setVisible(objAugment, false);
+    }
+
+    // --- Recall / shop checklist ---
+    const showRecall = ui.inBase === true || ui.recalling === true;
+    setVisible(recallAugment, showRecall);
+    setActive(recallAugment, showRecall);
+  }
+
+  // --------------------- wiring ---------------------
+
+  function init(){
+    if (api && api.getAnchors) {
+      api.getAnchors().then((a) => mergeAnchors(a)).catch(() => {});
+    }
+    if (api && api.onAnchors) api.onAnchors((a) => mergeAnchors(a));
+    if (api && api.onCalibration) api.onCalibration((p) => setCalibration(!!p?.calibration));
+    if (api && api.onStateUpdate) {
+      api.onStateUpdate((p) => window.requestAnimationFrame(() => render(p || {})));
+    }
+
+    window.addEventListener("resize", layout);
+    layout();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

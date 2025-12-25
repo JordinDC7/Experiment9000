@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>lol-build-intel Debug Console</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0;
+        padding: 10px;
+        background: #070b10;
+        color: #d7f7ee;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+        font-size: 12px;
+      }
+      .top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      button {
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.12);
+        color: #d7f7ee;
+        border-radius: 8px;
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+      button:hover { background: rgba(255,255,255,0.12); }
+      #log {
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.35;
+      }
+      .muted { opacity: 0.7; }
+    </style>
+  </head>
+  <body>
+    <div class="top">
+      <div><b>Debug Console</b> <span class="muted" id="status"></span></div>
+      <div>
+        <button id="clear">Clear</button>
+        <button id="copy">Copy</button>
+      </div>
+    </div>
+    <div id="log"></div>
+
+    <script>
+      const logEl = document.getElementById("log");
+      const statusEl = document.getElementById("status");
+      const btnClear = document.getElementById("clear");
+      const btnCopy = document.getElementById("copy");
+
+      function append(line) {
+        logEl.textContent += line + "\n";
+        window.scrollTo(0, document.body.scrollHeight);
+      }
+
+      btnClear.onclick = () => { logEl.textContent = ""; };
+      btnCopy.onclick = async () => {
+        try { await navigator.clipboard.writeText(logEl.textContent); }
+        catch {}
+      };
+
+      statusEl.textContent = "(waiting for stream...)";
+
+      // Receive logs from main
+      window.electron?.onDebugLog?.((msg) => {
+        statusEl.textContent = "(connected)";
+        append(msg);
+      });
+
+      // If IPC not available in debug window, show it
+      if (!window.electron?.onDebugLog) {
+        append("[debug] IPC bridge missing (preload not attached to debug window)");
+      }
+    </script>
+  </body>
+</html>

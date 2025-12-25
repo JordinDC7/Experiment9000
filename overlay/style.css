@@ -1,0 +1,38 @@
+
+body {
+  margin: 0;
+  background: rgba(10,10,10,0.85);
+  color: #fff;
+  font-family: system-ui;
+  user-select: none;
+}
+
+#app {
+  padding: 8px;
+  -webkit-app-region: drag;
+}
+
+input, button {
+  width: 100%;
+  margin: 4px 0;
+  padding: 6px;
+  border-radius: 4px;
+  border: none;
+  font-size: 12px;
+  -webkit-app-region: no-drag;
+}
+
+#suggestions {
+  background: #111;
+  max-height: 80px;
+  overflow-y: auto;
+}
+
+.suggestion {
+  padding: 4px;
+  cursor: pointer;
+}
+
+.suggestion:hover {
+  background: #333;
+}
